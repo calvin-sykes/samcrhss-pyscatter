@@ -64,41 +64,46 @@ class MCRT:
 
     def interact(self):
         """test photon packets for scattering, escape etc. and update weights appropriately"""
-        # boolean conditions for identifying completed packets
-        #escaped = np.sum(self.position**2, -1) > self.r_max * self.r_max
-        escaped = np.einsum('ij,ij->i', self.position, self.position) > self.r_max * self.r_max # much faster!
-        if self.albedo < 1:
-            absorbed = rand(self.n_packets) > self.albedo
-        else:
-            # optimisation: albedo of one means packets are never absorbed
-            absorbed = np.zeros(self.n_packets, dtype=np.bool)
-        scattered = ~(escaped | absorbed)
+        i_incomplete, = np.nonzero(self.incomplete) # find indices of currently active packets
+        escaped = np.einsum('ij,ij->i', self.position[i_incomplete], self.position[i_incomplete]) > \
+            self.r_max * self.r_max # test active packets for escape condition
+        i_escaped = i_incomplete[escaped]
+        self.complete[i_escaped] = True # mark complete if packet left sphere this iteration
 
-        self.complete[escaped & self.incomplete] = True # mark complete if packet left sphere this iteration
-        self.complete[absorbed & self.incomplete] = True # mark complete if absorbed this iteration
+        # optimisation: albedo of one means packets are never absorbed
+        if self.albedo < 1:
+            absorbed = rand(self.n_incomplete) > self.albedo
+            i_absorbed = i_incomplete[absorbed]
+            self.complete[i_absorbed] = True # mark complete if absorbed this iteration
+            scattered = ~(escaped | absorbed)
+        else:
+            scattered = ~escaped
+        i_scattered = i_incomplete[scattered]
+
+        # bookkeeping
         self.incomplete = ~self.complete
-        self.n_incomplete = self.incomplete.sum()
+        self.n_incomplete -= i_escaped.size
+        if self.albedo < 1:
+            self.n_incomplete -= i_absorbed.size
 
         # calculate new directions for scattered packets
         newtheta, newphi = MCRT.random_iso_dir(self.n_incomplete)
-        self.theta[scattered] = newtheta
-        self.phi[scattered] = newphi
+        self.theta[i_scattered] = newtheta
+        self.phi[i_scattered] = newphi
 
         if self.nee:
-            n_scat = scattered.sum()
+            n_scat = i_scattered.size
             # peel off one photon per scattering event
             # with weight set by the optical depth at which scattering occured
-            #weights = self.nee_weights(self.position[scattered]) * self.weights[scattered]
-            weights = MCRT.nee_weights_numba(self.position[scattered], self.r_max, self.kappa) * self.weights[scattered]
+            weights = MCRT.nee_weights_numba(self.position[i_scattered], self.r_max, self.kappa) * \
+                self.weights[i_scattered]
             # check if NEE photon buffer big enough
             if self.nee_next + n_scat > self.nee_max:
                 self.nee_photons.resize(2 * self.nee_max, 4)
                 self.nee_max *= 2
-            np.compress(scattered, self.position, axis=0,
-                        out=self.nee_photons[self.nee_next:self.nee_next+n_scat,0:3])
+            # copy scattering positions, weights to buffer
+            self.nee_photons[self.nee_next:self.nee_next+n_scat,0:3] = self.position[i_scattered]
             self.nee_photons[self.nee_next:self.nee_next+n_scat,3] = weights
-            #self.nee_photons[self.nee_next:self.nee_next+n_scat] = \
-                #np.hstack([self.position[scattered], weights[:,None]])
             self.nee_next += n_scat
 
     def nee_weights(self, scattered_pos):
