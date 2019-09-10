@@ -57,9 +57,14 @@ class MCRT:
     def move(self):
         """take step along random walks for all photon packets"""
         path_length = self.tau / self.tau_max * self.r_max # distance each packet travels
-        dpos = np.array([path_length * np.cos(self.phi[self.incomplete]) * np.sin(self.theta[self.incomplete]),
-                         path_length * np.sin(self.phi[self.incomplete]) * np.sin(self.theta[self.incomplete]),
-                         path_length * np.cos(self.theta[self.incomplete])]).T # direction vector for each packet
+        st = np.sin(self.theta[self.incomplete])
+        ct = np.cos(self.theta[self.incomplete])
+        sp = np.sin(self.phi[self.incomplete])
+        cp = np.cos(self.phi[self.incomplete])
+
+        dpos = np.array([path_length * cp * st,
+                         path_length * sp * st,
+                         path_length * ct]).T # direction vector for each packet
         self.position[self.incomplete] += dpos
 
     def interact(self):
